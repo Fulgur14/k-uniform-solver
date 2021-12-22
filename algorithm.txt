@@ -1,0 +1,271 @@
+The tiling solver/pruner algorithm: the basics
+Author: Marek Čtrnáct
+
+The Purpose
+This algorithm is a combination of two processes (solver and pruner). Together, they can search for periodic tilings satisfying specific conditions.
+Note 1: This algorithm can either put together tiles of arbitrary shape, or it can put together vertices of k-uniform tilings. Both approaches have some minor differences. For our purposes here, we will consider the second option.
+Note 2: While this particular implementation of the algorithm works with Euclidean vertices and tiles, this is by no means a requirement. The algorithm also works for a wide range of hyperbolic tessellation systems.
+
+-----
+
+Part 1: Vertex Representation
+Each k-uniform tiling is made from k distinct orbits of vertices. Each vertex type is represented by a structure composed of vertex itself, its half-edges (lines from the vertex to the center of adjacent edge), and any global symmetries the vertex possesses.
+
+Global Symmetries
+If there is a global symmetry (symmetry of the whole tessellation) that involves the vertex, the vertex representation reflects that. These symmetries are:
+a) axes of symmetry passing through the vertex
+b) centers of rotational symmetry coincident with the vertex
+
+Vertex Configurations
+A "vertex configuration" is simply a representation of all the polygons around the vertex. For example, a vertex where four squares meet has configuration (4,4,4,4), and that is the only possible configuration for it.
+A vertex where two triangles and two hexagons meet, on the other hand, can have two distinct configurations, (3,3,6,6) and (3,6,3,6).
+
+Vertex Symbol
+A "vertex symbol" combines the vertex configuration with symmetry data into a symbol that identifies the vertex type uniquely.
+If the vertex configuration is completely asymmetrical (like (3,4,4,6), for example), its vertex symbol is the same as the configuration. However, in many cases, the vertex possesses potential symmetries.
+In case of the vertex (3,3,6,6), there is a possibility of an axial symmetry passing through the edge between the two triangles, and the edge between the two hexagons. If this symmetry is global, the vertex symbol is "(3,3,6,6)A" (as in "a"xial). If it is not global, the vertex symbol is "(3,3,6,6)F" (as in "f"ull).
+A vertex with higher degree of symmetry, like (3,6,3,6), will have larger amount of different symmetry forms, and therefore symbols:
+1) (3,6,3,6)F: no global symmetry
+2/3) (3,6,3,6)A1 and (3,6,3,6)A2: axial symmetry
+Since this vertex has two possible axes of symmetry, which are not equivalent (one passes through the triangles while the other passes through the hexagons), it has two different axially symmetrical forms.
+4) (3,6,3,6)R: rotational symmetry; the R symbol denotes "r"otation.
+5) (3,6,3,6)S: both axes of symmetry (and also the rotational symmetry); the S symbol denotes "s"ymmmetry.
+
+Now let's look at the most symmetrical vertex in the k-uniform Euclidean set, the vertex (3,3,3,3,3,3) or (3^6):
+1) (3,3,3,3,3,3)F: no global symmetry
+2/3) (3,3,3,3,3,3)A1 and (3,3,3,3,3,3)A2: axial symmetry; there are two nonequivalent axes of symmetry, passing either through a pair of opposite edges or through a pair of opposite triangles.
+4) (3,3,3,3,3,3)R2: rotational symmetry of degree 2; in case of vertex with multiple possible rotational symmetries, a number denoting the degree of symmetry is attached.
+5) (3,3,3,3,3,3)S2: two axes of symmetry; like with the R symbol, S symbol can also have a number attached if there are multiple possibilities. If this vertex has two axes of symmetry, one of them must pass through edges and the other one through triangles.
+6) (3,3,3,3,3,3)R3: rotational symmetry of degree 3.
+7/8) (3,3,3,3,3,3)S3a and (3,3,3,3,3,3)S3b: three axes of symmetry. There are two subcases: either all the axes pass through edges, or they all pass through the triangles. In this case, they are marked with lowercase "a" or "b" at the end; since there can only ever be two nonequivalent classes of axes of symmetry, more letters are not needed.
+9) (3,3,3,3,3,3)R6: rotational symmetry of degree 6.
+10) (3,3,3,3,3,3)S6: six axes of symmetry.
+
+Half-Edge Labels
+Each half-edge coming from a vertex is assigned a number that identifies it uniquely. For example, the asymmetrical vertex (3,4,4,6) has four half-edges labeled as 0, 1, 2, and 3. The start and direction of labeling is arbitrary; my convention is to have the polygon between half-edges 0 and 1 be the largest possible and use lexicographically maximal representation afterwards. That means that edge 1 is between a hexagon and a square, edge 2 between two squares, edge 3 between a square and a triangle, and edge 0 between a triangle and a hexagon.
+
+Mirror Half-Edges
+A mirror image of a half-edge has the same number, but with the symbol "*" prepended. So, the mirror image of the previously mentioned vertex (3,4,4,6) would have edges:
+*0, between a hexagon and a triangle
+*1, between a square and a hexagon
+*2, between two squares
+*3, between a triangle and a square
+
+Corners
+A "corner" is a pair of two consecutive edges, together with a number denoting the polygon between them. In the case of vertex (3,4,4,6), it has eight corners, written as follows:
+0/1(6)-
+1/2(4)-
+2/3(4)-
+3/0(3)-
+*0/*3(3)-
+*1/*0(6)-
+*2/*1(4)-
+*3/*2(4)-
+
+The size of the polygon is written in parentheses. The dash at the end of the corner symbol allows for an easy way to concatenate them. Note that the numbering is ascending for the normal vertex and descending for the mirror image. All corners are oriented the same way (by convention, first edge is the one on the left and second the one on the right), but mirror images of vertices have their half-edges labeled in reverse.
+
+Half-Edge Labels and Corners of Symmetrical Vertices
+Vertex (3,4,4,6) is completely asymmetrical. For more symmetrical vertices, the numbering is more complex. Let's look at the (3,6,3,6) vertex as an example:
+(3,6,3,6)F has no global symmetries and its numbering is regular: four half-edges with labels (0,1,2,3), and four mirror half-edges with labels (*0,*1,*2,*3). It has eight corners, as follows:
+0/1(6)-
+1/2(3)-
+2/3(6)-
+3/0(3)-
+*0/*3(3)-
+*1/*0(6)-
+*2/*1(3)-
+*3/*2(6)-
+
+(3,6,3,6)A1 has an axial symmetry passing through the triangles. As it is axially symmetrical, it is its own mirror image. It will, therefore, have only four corners arranged in a single cycle instead of eight corners arranged in two:
+0/1(6)-
+1/*1(3)-
+*1/*0(6)-
+*0/0(3)-
+
+As you can see, the half-edge 2 is replaced by *1 (as it's the mirror image of half-edge 1), similarly half-edge 3 is replaced by *0.
+The corners involving triangles are composed of a half-edge and its mirror image (1/*1 and *0/0), which denotes that there is a global axis of symmetry passing between them.
+
+(3,6,3,6)A2 has axial symmetry passing through the hexagons, and its corners look like this:
+0/*0(6)-
+*0/2(3)-
+2/*2(6)-
+*2/0(3)-
+
+This time, it's the hexagons which get symmetrical corners (0/*0 and 2/*2).
+
+(3,6,3,6)R has rotational symmetry of degree 2. This is expressed by cutting the corners in half:
+0/1(6)-
+1/0(3)-
+*0/*1(3)-
+*1/*0(6)-
+
+Half-edge 0 and 2 is combined into a single half-edge, as well as half-edge 1 and 3. However, since this form of the vertex has no axial symmetries, the vertex is chiral and its mirror image must be listed.
+
+(3,6,3,6)S can be considered as the previous (3,6,3,6)R plus an axial symmetry. It has only two distinct corners:
+0/*0(6)-
+*0/0(3)-
+
+Finally, let's consider the vertex (3,3,6,6)A, whose corners are as follows:
+0/1(6)-
+1/*0(6)-
+*0/3(3)-
+3/0(3)-
+
+Half-edges 0 and *0 are mirror images, but the half-edges 1 and 3 lack the corresponding *1 and *3 half-edges. This is because the vertex has an axis that passes through these edges, making them self-mirrored.
+
+Half-Edge Labels for Multiple Vertex Types
+If there are multiple vertex types (and in the study of k-uniform tilings, there usually are), each of them is assigned a specific number in sequence, starting at 0. This number is then adjoined to the tile label using the "@" symbol. For example, edge 5 of vertex 7 would be denoted as 5@7, and edge *3 of vertex 0 as *3@0.
+To simplify things a bit, an alternate convention is used for vertices 0-3.
+Vertex 0 is denoted simply by edge label without further identifiers.
+Vertices 1 to 3 are denoted by edge label followed by 1-3 primes ("'").
+So, edge 0 of vertices 0 to n would be 0, 0', 0'', 0''', 0@4, 0@5, ... 0@n.
+
+-----
+
+Part 2: Gluing
+The main operation used to construct k-uniform tilings is the "gluing". Gluing means that two half-edges are "glued" together to form one full edge. Each gluing therefore corresponds to one class of edges in the tessellation.
+There are four basic types of gluings. (In the following, a and b are distinct half-edges.):
+1) (a): The half-edge a is glued to itself. This forms a global center of rotational symmetry of degree 2 in the center of the resulting edge. If the edge a is not self-mirrored, the mirrored half-edge *a is also glued to itself. If the half-edge a IS self-mirrored, there will also be an additional global axis of symmetry perpendicular to the edge.
+2) [a]: The half-edge a is glued to its mirror image, *a. This means that there is a global axis of symmetry perpendicular to the resulting edge.
+3) (a b): The half-edge a is glued to the half-edge b, and, if they are not self-mirrored, the same is true for their mirror images *a and *b. Note that it's not possible for only one of the half-edges a and b to be self-mirrored; either neither is, or they both are.
+4) [a b]: The half-edge a is glued to the half-edge *b, and *a is glued to b.
+
+The Conway Symbol
+There may be many gluings in the full solution describing a tessellation. Since this notation was inspired by the orbifold symbols of the late John H. Conway, I call the concatenation of gluings "the Conway symbol".
+
+Building Polygons From the Conway Symbol
+For this next part, I am going to use some simple 2-uniform tilings as examples.
+If we have the list of vertex types used by a tessellation, and the Conway symbol describing the gluings, we can verify the validity of the tessellation by building polygons.
+
+Example 1:
+Let's start with a tiling that uses vertex (4,4,4,4)S2a and (3,3,3,4,4)A. It's Conway symbol is "(0)(1 1')[0'](3')". It has 4 gluings, so the tiling has 4 distinct types of edges.
+
+First, we write the corners:
+0/1(4)-
+1/0(4)-
+0'/1'(4)-
+1'/*0'(4)-
+*0'/3'(3)-
+3'/*3'(3)-
+*3'/0'(3)-
+
+The vertex (4,4,4,4)S2a has only two distinct corners thanks to its two axes of symmetry.
+Now we start at the bottom of the list. This is the corner "*3'/0'(3)-". We look at the Conway symbol to determine what its left half-edge, *3', should be connected to. There's a gluing (3'), meaning that the half-edge 3' (and, therefore, also *3') is glued to itself. We express this by finding a row with right half-edge *3' and concatenating the last row to it:
+
+0/1(4)-
+1/0(4)-
+0'/1'(4)-
+1'/*0'(4)-
+*0'/3'(3)-
+3'/*3'(3)-*3'/0'(3)-
+
+Now we repeat the process. The new last line starts with 3', and we already know that's glued to itself, and so we put it behind 3':
+
+0/1(4)-
+1/0(4)-
+0'/1'(4)-
+1'/*0'(4)-
+*0'/3'(3)-3'/*3'(3)-*3'/0'(3)-
+
+Now the last line starts with *0'. There is a gluing "[0']", meaning that *0' must be put behing its mirror image, 0'. But that half-edge is already at the end of the last line. The three corners, "*0'/3'(3)-", "3'/*3'(3)-", and "*3'/0'(3)-" therefore form a cycle. We express this by indenting the line and erasing the final "-" to signify its completion:
+0/1(4)-
+1/0(4)-
+0'/1'(4)-
+1'/*0'(4)-
+ *0'/3'(3)-3'/*3'(3)-*3'/0'(3)
+
+We continue. The last line is complete, so we skip it, the new last line starts with 1'. The gluing is (1 1') (notice that both of these half-edges are self-mirrored), so we move this line behind the half-edge 1:
+0/1(4)-1'/*0'(4)-
+1/0(4)-
+0'/1'(4)-
+ *0'/3'(3)-3'/*3'(3)-*3'/0'(3)
+
+Now for half-edge 0': We already know it's supposed to go after *0'.
+0/1(4)-1'/*0'(4)-0'/1'(4)-
+1/0(4)-
+ *0'/3'(3)-3'/*3'(3)-*3'/0'(3)
+
+Next, 1 goes after 1'...
+0/1(4)-1'/*0'(4)-0'/1'(4)-1/0(4)-
+ *0'/3'(3)-3'/*3'(3)-*3'/0'(3)
+
+...and 0 is part of the gluing (0), meaning it goes after 0, which completes the final row:
+ 0/1(4)-1'/*0'(4)-0'/1'(4)-1/0(4)
+ *0'/3'(3)-3'/*3'(3)-*3'/0'(3)
+
+We can see that the completed cycles have several features:
+1) All numbers in parentheses (polygon sizes) are identical throughout each cycle. Each cycle, in fact, corresponds to one tile in our tessellation. Since we are looking at k-uniform Euclidean tilings, which is made from regular polygons, each polygon's corners must be the same. (The number in parentheses could be replaced with the inner angle of the respective polygon to make this clearer.)
+2) The length of each cycle corresponds to its polygon size. The cycle describing a square has the length of 4 corners, and the cycle describing a triangle has the length of 3 corners.
+
+The condition 1) is absolute and holds for all k-uniform tilings of this type, since it's equivalent to "all tiles are regular polygons". However, the condition 2) is, in fact, stronger than it needs to be. In order to show this, we'll look at another tessellation.
+
+Example 2:
+This tessellation has vertices of two types: (3,12,12)A and (3,4,3,12)A. Its Conway symbol is [0 0'](1)[2'].
+Once again, we'll start with the initial list of corners:
+0/1(12)-
+1/*0(12)-
+*0/0(3)-
+0'/*0'(12)-
+*0'/2'(3)-
+2'/*2'(4)-
+*2'/0'(3)-
+
+After building the polygons according the the rules from Example 1, we get the following result:
+ 0/1(12)-1/*0(12)-0'/*0'(12)
+ *0/0(3)-*0'/2'(3)-*2'/0'(3)
+ 2'/*2'(4)
+
+The condition 1) is satisfied: the cycles describe a dodecagon, a triangle, and a square, respectively. But only the middle cycle, the triangle, has length 3. The dodecagon cycle has length 3 as well, and the square cycle has length only 1. What gives?
+
+The answer is that while these cycles are not sufficient by themselves, they can be extended by combining several copies together. Four copies of the first cycle will have the requisite length of 12, and, similarly, four copies of the third cycle will add up to the length of 4. This will have the effect that both the dodecagons and the squares will acquire rotational symmetry of degree 4.
+
+Thus, the real form of condition 2) is:
+2) The length of each cycle divides its polygon size.
+
+It's permissible to have a dodecagon cycle of length 1, 2, 3, 4, 6, or 12; but it's not permissible to have one of length 5 because 5 doesn't divide 12, and so no amount of copies could add up to a whole dodecagon.
+
+If all cycles, for some combination of a list of vertex types and a Conway symbol, satisfy conditions 1) and 2), the combination describes a valid tessellation.
+
+-----
+
+Part 3: The Partial Solutions and the Solver Algorithm
+
+Now that we know how a valid solution is supposed to look, the question is: how to reach it? We could use a simple "sieve" approach: writing down all possible gluings and eliminating the invalid ones. But this is feasible only for fairly simple systems; the number of possible gluings is simply way too large.
+
+My solver algorithm resolves this problem using tree search based on the notion of "partial solutions".
+
+What Are Partial Solutions?
+A "partial solution" is a combination of a list of vertex types and a Conway symbol, like a "real" solution. The difference is that the Conway symbol isn't complete: it contains gluings for some subset of half-edges, but not for all of them. The half-edges with no gluings are denoted as "free" half-edges.
+
+Conditions Partial Solutions Must Satisfy
+Even though partial solutions aren't complete, we can still test them for conditions 1) and 2). If we try to build polygons for a partial solution, some of the cycles will be incomplete (not closed). However, the condition 1) (all corners in a cycle must have the same polygon size) must still be satisfied; if it is not, that particular partial solution is invalid.
+Condition 2), on the other hand, needs to be adjusted a bit to allow for the possibility of incomplete cycles. It's now split into two sub-conditions:
+Condition 2a) If a cycle is closed, its length must divide its polygon size.
+Condition 2b) If a cycle is not closed, its length must not exceed its polygon size.
+
+Under these conditions, a dodecagon cycle of length 5 would be permissible -- as long as it's not closed. If it's not closed, it can still be extended by later gluing and eventually end up at length 6 or 12. However, a dodecagon cycle of length 13 is always invalid, even if incomplete, because the solver algorithm only works in one direction: it can add new gluings to partial solutions, but it can't remove them. That means that the cycles can only grow longer; there is no way to shorten them.
+
+How the Solver Algorithm Works
+The solver algorithm maintains a list of partial solutions. At each step, it performs the following operations:
+
+1) Pick a partial solution from the list.
+There are several options here. The current implementation always picks the first partial solution in the list for breadth-first search, but it could easily pick the last partial solution for depth-first search or pick a random solution for a combined approach.
+
+2) Identify a free half-edge of the partial solution.
+Each partial solution must have at least one free half-edge (otherwise it's a complete solution which is not stored in this list). If there is more than one, the algorithm picks a free half-edge depending on the length of the incomplete cycles that use it -- half-edges whose cycles are closer to their maximum allowed length are prioritised.
+
+3) Try to glue this half-edge to all free half-edges.
+Each of the resulting partial solutions is checked for legality. The legal ones are added to the list.
+
+4) If the partial solution doesn't have the maximum number of vertex types, try adding a new one.
+Each run of the solver has a set maximum of vertex types that are allowed. If this particular partial solution isn't at this maximum, then the program tries to add a new vertex and glue one the picked free half-edge to one of the new vertex's half-edges. Legal partial solutions are, once again, added to the list.
+
+5) Check for true solutions
+If the steps 3) or 4) create a solution with no free edges, the algorithm has found a valid tiling. In that case, a check based on the DFA minimization algorithm is run on the solution to ensure that it doesn't contain any hidden symmetries. For example, if the solution contains a vertex (3,3,3,4,4)F, then the axis of that vertex shouldn't be a global axis of the whole tiling (then it would be vertex (3,3,3,4,4)A. This check ensures that the representation of the solution is indeed the simplest possible. Solutions that don't pass the check are discarded, solutions that pass are saved to disk.
+
+-----
+
+Part 4: The Pruner Algorithm
+
+Only one problem remains now: it is possible that the solver reaches the same solution on different paths, and so finds it multiple times. The pruner algorithm is there to correct this.
+The pruner algorithm is ran on the results of the solver algorithm. It checks the solutions one by one. If it finds that a new solution is similar to a previous one (i.e. if it uses exactly the same set of vertices), it uses another check based on the DFA minimization algorithm to compare the new solution with all previous solutions using that set of vertices. Only if the new solution is distinct from all previous ones, it is admitted into the final list.
